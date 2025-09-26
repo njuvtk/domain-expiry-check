@@ -5,61 +5,77 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 def send_msg(text):
     if BOT_TOKEN and CHAT_ID:
-        r = requests.post(
+        requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={
-                "chat_id": CHAT_ID,
-                "text": text,
-                "parse_mode": "Markdown"  # 使用 Markdown
-            },
+            data={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"},
         )
-        print("Telegram response:", r.text)
-    else:
-        print("❌ BOT_TOKEN 或 CHAT_ID 未配置，消息未推送")
 
-with open("domains.txt") as f:
-    domains = [d.strip() for d in f if d.strip()]
-
-now = datetime.datetime.now()
-
-urgent, warning, safe, unknown = [], [], [], []
-
-for domain in domains:
+def query_local_whois(domain):
     try:
         w = whois.whois(domain)
         exp = w.expiration_date
         if isinstance(exp, list):
             exp = exp[0]
+        return exp
+    except:
+        return None
 
-        if exp is None:
-            msg = f"⚠️ *{domain}* 未返回到期时间，可能不支持 WHOIS"
-            unknown.append(msg)
-            continue
+def query_shreshtait(domain):
+    try:
+        url = f"https://domaininfo.shreshtait.com/api/search/{domain}"
+        resp = requests.get(url).json()
+        exp = resp.get("expiration_date")
+        if exp:
+            return datetime.datetime.fromisoformat(exp.split("T")[0])
+    except:
+        return None
 
-        days_left = (exp - now).days
+def query_whoxy(domain):
+    try:
+        url = f"https://www.whoxy.com/free-whois-api/?domain={domain}"
+        resp = requests.get(url).json()
+        exp = resp.get("expiration_date")
+        if exp:
+            return datetime.datetime.fromisoformat(exp.split("T")[0])
+    except:
+        return None
 
-        if days_left < 7:
-            msg = f"🚨 *{domain}* ⚠️ *仅剩 {days_left} 天!* (到期日: `{exp.date()}`)"
-            urgent.append((days_left, msg))
-        elif days_left <= 30:
-            msg = f"⚠️ *{domain}* 将在 *{days_left} 天* 后到期 (到期日: `{exp.date()}`)"
-            warning.append((days_left, msg))
-        else:
-            msg = f"✅ *{domain}* 剩余 *{days_left} 天* (到期日: `{exp.date()}`)"
-            safe.append((days_left, msg))
+def query_fallback(domain):
+    exp = query_local_whois(domain)
+    if exp is None:
+        exp = query_shreshtait(domain)
+    if exp is None:
+        exp = query_whoxy(domain)
+    return exp
 
-    except Exception as e:
-        msg = f"❌ *{domain}* 查询失败: `{e}`"
-        unknown.append(msg)
+# ----------------
+domains = []
+with open("domains.txt") as f:
+    domains = [d.strip() for d in f if d.strip()]
 
-# 排序：剩余天数升序
+now = datetime.datetime.now()
+urgent, warning, safe, unknown = [], [], [], []
+
+for domain in domains:
+    exp = query_fallback(domain)
+    if exp is None:
+        unknown.append(f"⚠️ *{domain}* 未返回到期时间或查询失败")
+        continue
+
+    days_left = (exp - now).days
+    if days_left < 7:
+        urgent.append((days_left, f"🚨 *{domain}* ⚠️ *仅剩 {days_left} 天!* (到期日: `{exp.date()}`)"))
+    elif days_left <= 30:
+        warning.append((days_left, f"⚠️ *{domain}* 将在 *{days_left} 天* 后到期 (到期日: `{exp.date()}`)"))
+    else:
+        safe.append((days_left, f"✅ *{domain}* 剩余 *{days_left} 天* (到期日: `{exp.date()}`)"))
+
+# 排序
 urgent.sort(key=lambda x: x[0])
 warning.sort(key=lambda x: x[0])
 safe.sort(key=lambda x: x[0])
 
-# 拼接最终报告
 sections = []
-
 if urgent:
     sections.append("*🚨 紧急 (<7天)*\n" + "\n".join(msg for _, msg in urgent))
 if warning:
@@ -70,6 +86,5 @@ if unknown:
     sections.append("*⚠️ 未知 / 查询失败*\n" + "\n".join(unknown))
 
 final_report = "📢 *域名到期检测报告*\n\n" + "\n\n".join(sections)
-
 print(final_report)
 send_msg(final_report)
