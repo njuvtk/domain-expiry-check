@@ -1,10 +1,8 @@
 import whois, datetime, requests, os
 
-# Telegram 配置（从 GitHub Secrets 里读取）
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# 读取域名列表
 with open("domains.txt") as f:
     domains = [d.strip() for d in f if d.strip()]
 
@@ -17,12 +15,15 @@ for domain in domains:
         if isinstance(exp, list):
             exp = exp[0]
 
+        if exp is None:
+            print(f"⚠️ {domain} 未返回到期时间，可能不支持 WHOIS 查询。")
+            continue
+
         days_left = (exp - now).days
 
         if days_left <= 30:
             msg = f"⚠️ 域名 {domain} 将在 {days_left} 天后到期 (到期日: {exp.date()})"
             print(msg)
-
             if BOT_TOKEN and CHAT_ID:
                 requests.post(
                     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
